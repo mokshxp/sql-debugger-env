@@ -1,0 +1,72 @@
+name: sql-debugger
+version: "1.0.0"
+description: >
+  A real-world environment where an AI agent debugs, fixes, and optimizes SQL queries
+  against a live SQLite database. Simulates the daily work of data engineers and analysts
+  who must identify syntax errors, semantic bugs, performance bottlenecks, and produce
+  correct, efficient SQL that satisfies business requirements.
+author: OpenEnv SQL Debugger
+license: MIT
+tags:
+  - openenv
+  - sql
+  - debugging
+  - data-engineering
+  - code-repair
+  - real-world
+
+tasks:
+  - id: task_easy
+    name: "SQL Syntax Fix"
+    difficulty: easy
+    description: >
+      Fix a SQL query with one or two clear syntax/semantic errors so it returns
+      the correct result set. The correct answer is deterministic.
+    max_steps: 10
+    reward_threshold: 0.8
+
+  - id: task_medium
+    name: "SQL Logic Repair"
+    difficulty: medium
+    description: >
+      Repair a SQL query that has subtle logical errors (wrong JOIN type, incorrect
+      aggregation, missing GROUP BY). The query runs without error but returns wrong data.
+    max_steps: 15
+    reward_threshold: 0.7
+
+  - id: task_hard
+    name: "SQL Optimization & Correctness"
+    difficulty: hard
+    description: >
+      Given a slow, incorrect query and a business requirement, produce a correct AND
+      efficient query (uses indexes, avoids cartesian products, correct window functions).
+      Graded on both correctness and a performance proxy (query plan complexity).
+    max_steps: 20
+    reward_threshold: 0.6
+
+observation_space:
+  type: object
+  properties:
+    task_id: {type: string}
+    db_schema: {type: string, description: "DDL for all tables in the database"}
+    business_requirement: {type: string, description: "What the query must compute"}
+    current_query: {type: string, description: "Agent's current SQL query"}
+    execution_result:
+      type: object
+      properties:
+        success: {type: boolean}
+        rows: {type: array, description: "Result rows as list of dicts"}
+        error: {type: string, description: "Error message if execution failed"}
+        row_count: {type: integer}
+    feedback: {type: string, description: "Partial grader feedback for the agent"}
+    step: {type: integer}
+    max_steps: {type: integer}
+    score: {type: number, description: "Current best score 0.0-1.0"}
+
+action_space:
+  type: object
+  properties:
+    sql:
+      type: string
+      description: "The SQL query to submit. Agent replaces this each step."
+  required: [sql]
