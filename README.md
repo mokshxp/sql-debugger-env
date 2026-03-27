@@ -1,6 +1,6 @@
 ---
 title: SQL Debugger OpenEnv
-emoji: ??
+emoji: 🔍
 colorFrom: blue
 colorTo: green
 sdk: docker
@@ -9,3 +9,7 @@ license: mit
 tags:
   - openenv
 ---
+
+# SQL Debugger OpenEnv
+
+A real-world OpenEnv environment where AI agents debug and optimize SQL queries.
