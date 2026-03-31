@@ -15,11 +15,11 @@ dependencies = [
     "pydantic>=2.7.4",
     "openai>=1.35.3",
     "requests>=2.32.3",
+    "openenv>=0.1.13",
 ]
 
-[project.urls]
-Homepage = "https://huggingface.co/spaces/moksh24/sql-debugger-env"
-Repository = "https://github.com/mokshxp/sql-debugger-env"
+[project.scripts]
+server = "app:app"
 
 [tool.openenv]
 name = "sql-debugger"
