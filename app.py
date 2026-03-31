@@ -54,6 +54,18 @@ def _get_env(task_id: str) -> SQLDebuggerEnv:
 class ResetRequest(BaseModel):
     task_id: str = "task_easy"
 
+    model_config = {"extra": "ignore"}
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls._validate
+
+    @classmethod
+    def _validate(cls, v):
+        if v is None:
+            return cls()
+        return cls(**v) if isinstance(v, dict) else v
+
 
 class StepRequest(BaseModel):
     task_id: str = "task_easy"
@@ -93,7 +105,9 @@ def list_tasks():
 
 
 @app.post("/reset", response_model=Dict[str, Any])
-def reset(req: ResetRequest):
+def reset(req: Optional[ResetRequest] = None):
+    if req is None:
+        req = ResetRequest()
     env = _get_env(req.task_id)
     obs = env.reset()
     return obs.model_dump()
