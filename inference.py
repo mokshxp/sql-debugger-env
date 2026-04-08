@@ -39,20 +39,19 @@ Output ONLY the corrected SQL query — no explanations, no markdown, no backtic
 # OpenAI client initialization - Using the Proxy
 # ---------------------------------------------------------------------------
 def get_client():
-    if not API_KEY or not API_BASE_URL:
-        # Using stderr for warnings so we don't pollute the structured logs
-        print(f"DEBUG ERROR: Missing API_KEY or API_BASE_URL", file=sys.stderr)
+    # The checklist specifically asks for HF_TOKEN
+    base_url = os.environ.get("API_BASE_URL")
+    hf_token = os.environ.get("HF_TOKEN")
+    
+    if not hf_token or not base_url:
+        print(f"DEBUG: Missing Env Vars - URL: {base_url}, Token: {bool(hf_token)}", file=sys.stderr)
         return None
-    try:
-        return OpenAI(
-            api_key=API_KEY,      # Required by LiteLLM Proxy
-            base_url=API_BASE_URL, # Required by LiteLLM Proxy
-            timeout=30.0,
-        )
-    except Exception as e:
-        print(f"DEBUG ERROR: Client init failed: {e}", file=sys.stderr)
-        return None
-
+            
+    return OpenAI(
+        api_key=hf_token,      # Checklist says use HF_TOKEN here
+        base_url=base_url,
+        timeout=30.0,
+    )
 # ---------------------------------------------------------------------------
 # Environment Helpers
 # ---------------------------------------------------------------------------
