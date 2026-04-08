@@ -1,13 +1,13 @@
 """
 inference.py — Baseline inference script for SQL Debugger OpenEnv.
-Optimized for strict OpenEnv Phase 2 Validation.
+Updated to use the official LLM Proxy credentials (API_KEY and API_BASE_URL).
 """
 import os
 import json
 import time
 import sys
 
-# Silence auto-installers to prevent polluting stdout
+# Silence auto-installers
 def install_package(package):
     try:
         __import__(package)
@@ -21,11 +21,11 @@ import requests
 from openai import OpenAI
 
 # ---------------------------------------------------------------------------
-# Config from environment variables
+# Config: EXACT names from the Meta/Scaler Validator instructions
 # ---------------------------------------------------------------------------
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
+API_BASE_URL = os.environ.get("API_BASE_URL")
+API_KEY      = os.environ.get("API_KEY") # This is the key they track
 MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN     = os.environ.get("HF_TOKEN", os.environ.get("OPENAI_API_KEY", ""))
 ENV_URL      = os.environ.get("ENV_URL", "http://localhost:7860")
 
 TASK_IDS    = ["task_easy", "task_medium", "task_hard"]
@@ -36,17 +36,21 @@ SYSTEM_PROMPT = """You are an expert SQL engineer. Debug and fix the given SQL q
 Output ONLY the corrected SQL query — no explanations, no markdown, no backticks."""
 
 # ---------------------------------------------------------------------------
-# OpenAI client initialization
+# OpenAI client initialization - Using the Proxy
 # ---------------------------------------------------------------------------
 def get_client():
-    token = HF_TOKEN if HF_TOKEN else "dummy-token"
+    if not API_KEY or not API_BASE_URL:
+        # Using stderr for warnings so we don't pollute the structured logs
+        print(f"DEBUG ERROR: Missing API_KEY or API_BASE_URL", file=sys.stderr)
+        return None
     try:
         return OpenAI(
-            api_key=token,
-            base_url=API_BASE_URL,
+            api_key=API_KEY,      # Required by LiteLLM Proxy
+            base_url=API_BASE_URL, # Required by LiteLLM Proxy
             timeout=30.0,
         )
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG ERROR: Client init failed: {e}", file=sys.stderr)
         return None
 
 # ---------------------------------------------------------------------------
@@ -77,7 +81,7 @@ Write the corrected SQL query:"""
 # Run a single task episode
 # ---------------------------------------------------------------------------
 def run_task(task_id: str):
-    # ✅ MANDATORY: No text should ideally precede this for regex parsers
+    # MANDATORY START TAG
     print(f"[START] task={task_id}", flush=True)
 
     try:
@@ -85,7 +89,6 @@ def run_task(task_id: str):
         max_steps = observation.get("max_steps", 10)
         step = 0
         best_score = 0.0
-
         client = get_client()
 
         while step < max_steps:
@@ -94,6 +97,7 @@ def run_task(task_id: str):
                 {"role": "user", "content": build_user_prompt(observation)},
             ]
 
+            # Use existing query as default if LLM fails
             sql = observation.get("current_query", "SELECT 1")
 
             if client:
@@ -105,8 +109,8 @@ def run_task(task_id: str):
                         max_tokens=MAX_TOKENS,
                     )
                     sql = completion.choices[0].message.content or sql
-                except Exception:
-                    pass # Fallback to current_query
+                except Exception as e:
+                    print(f"LLM Call Failed: {e}", file=sys.stderr)
 
             # Clean output
             sql = sql.replace("```sql", "").replace("```", "").strip()
@@ -117,7 +121,7 @@ def run_task(task_id: str):
             score = observation.get("score", 0.0)
             best_score = max(best_score, score)
 
-            # ✅ MANDATORY: [STEP] block
+            # MANDATORY STEP TAG
             print(f"[STEP] step={step+1} reward={reward:.4f}", flush=True)
 
             if result["done"]:
@@ -125,18 +129,16 @@ def run_task(task_id: str):
             step += 1
             time.sleep(0.1)
 
-        # ✅ MANDATORY: [END] block
+        # MANDATORY END TAG
         print(f"[END] task={task_id} score={best_score:.4f} steps={step+1}", flush=True)
 
     except Exception as e:
-        # Emergency exit tag so validator doesn't hang
         print(f"[END] task={task_id} score=0.0000 steps=0", flush=True)
-        print(f"Internal Error: {e}", file=sys.stderr)
+        print(f"Task Error: {e}", file=sys.stderr)
 
 # ---------------------------------------------------------------------------
 # Main execution
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Removed all intro prints to keep stdout clean for the validator
     for task_id in TASK_IDS:
         run_task(task_id)
