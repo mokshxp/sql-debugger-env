@@ -1,6 +1,6 @@
 """
 inference.py — Baseline inference script for SQL Debugger OpenEnv.
-Reads API_BASE_URL, MODEL_NAME, HF_TOKEN from environment variables.
+Reads API_BASE_URL, MODEL_NAME, API_KEY from environment variables.
 """
 import os
 import json
@@ -10,24 +10,24 @@ import sys
 try:
     import requests
 except ImportError:
-    print("Installing requests...")
     os.system(f"{sys.executable} -m pip install requests -q")
     import requests
 
 try:
     from openai import OpenAI
 except ImportError:
-    print("Installing openai...")
     os.system(f"{sys.executable} -m pip install openai -q")
     from openai import OpenAI
 
 # ---------------------------------------------------------------------------
 # Config from environment variables
+# ✅ FIX 1: Use API_KEY (not HF_TOKEN) — this is what the validator injects
+# ✅ FIX 2: ENV_URL points to the actual HF Space, not localhost
 # ---------------------------------------------------------------------------
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN     = os.environ.get("HF_TOKEN", os.environ.get("OPENAI_API_KEY", ""))
-ENV_URL      = os.environ.get("ENV_URL", "http://localhost:7860")
+API_KEY      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", os.environ.get("OPENAI_API_KEY", "dummy-key")))
+ENV_URL      = os.environ.get("ENV_URL", "https://moksh24-sql-debugger-env.hf.space")
 
 TASK_IDS    = ["task_easy", "task_medium", "task_hard"]
 TEMPERATURE = 0.2
@@ -37,7 +37,7 @@ SYSTEM_PROMPT = """You are an expert SQL engineer. Debug and fix the given SQL q
 Output ONLY the corrected SQL query — no explanations, no markdown, no backticks."""
 
 # ---------------------------------------------------------------------------
-# OpenAI client — wrapped in try/except
+# OpenAI client — always uses API_BASE_URL and API_KEY from environment
 # ---------------------------------------------------------------------------
 client = None
 
@@ -46,51 +46,28 @@ def get_client():
     if client is not None:
         return client
     try:
-        if not HF_TOKEN:
-            print("WARNING: HF_TOKEN not set. Using dummy token for testing.")
-            token = "dummy-token"
-        else:
-            token = HF_TOKEN
         client = OpenAI(
-            api_key=token,
+            api_key=API_KEY,
             base_url=API_BASE_URL,
             timeout=30.0,
         )
         return client
     except Exception as e:
-        print(f"WARNING: Could not initialize OpenAI client: {e}")
+        print(f"WARNING: Could not initialize OpenAI client: {e}", flush=True)
         return None
 
 # ---------------------------------------------------------------------------
 # Environment client
 # ---------------------------------------------------------------------------
 def env_reset(task_id: str) -> dict:
-    try:
-        r = requests.post(
-            f"{ENV_URL}/reset",
-            json={"task_id": task_id},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        print(f"ERROR: Could not reset environment: {e}")
-        raise
-
+    r = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30)
+    r.raise_for_status()
+    return r.json()
 
 def env_step(task_id: str, sql: str) -> dict:
-    try:
-        r = requests.post(
-            f"{ENV_URL}/step",
-            json={"task_id": task_id, "sql": sql},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        print(f"ERROR: Could not step environment: {e}")
-        raise
-
+    r = requests.post(f"{ENV_URL}/step", json={"task_id": task_id, "sql": sql}, timeout=30)
+    r.raise_for_status()
+    return r.json()
 
 # ---------------------------------------------------------------------------
 # Prompt builder
@@ -121,97 +98,89 @@ Current score: {observation.get('score', 0.0):.3f}
 
 Write the corrected SQL query:"""
 
-
 # ---------------------------------------------------------------------------
-# Run a single task episode
+# Run a single task
+# ✅ FIX 3: [START]/[STEP]/[END] always printed with flush=True
 # ---------------------------------------------------------------------------
 def run_task(task_id: str) -> dict:
-    print(f"\n{'='*50}")
-    print(f"Task: {task_id}")
-    print(f"{'='*50}")
+    print(f"[START] task={task_id}", flush=True)
 
-    observation = env_reset(task_id)
-    max_steps   = observation.get("max_steps", 10)
-    done        = False
-    step        = 0
-    best_score  = 0.0
+    best_score = 0.0
+    step = 0
 
-    while not done and step < max_steps:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": build_user_prompt(observation)},
-        ]
+    try:
+        observation = env_reset(task_id)
+        max_steps = observation.get("max_steps", 10)
+        done = False
 
-        sql = observation.get("current_query", "SELECT 1")
+        while not done and step < max_steps:
+            sql = observation.get("current_query", "SELECT 1")
 
-        try:
-            c = get_client()
-            if c is not None:
-                completion = c.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=messages,
-                    temperature=TEMPERATURE,
-                    max_tokens=MAX_TOKENS,
-                    stream=False,
-                )
-                sql = completion.choices[0].message.content or sql
-            else:
-                print(f"  Step {step+1}: No client available, using current query as fallback")
-        except Exception as exc:
-            print(f"  Step {step+1}: Model request failed ({exc}). Using fallback.")
+            try:
+                c = get_client()
+                if c is not None:
+                    completion = c.chat.completions.create(
+                        model=MODEL_NAME,
+                        messages=[
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": build_user_prompt(observation)},
+                        ],
+                        temperature=TEMPERATURE,
+                        max_tokens=MAX_TOKENS,
+                        stream=False,
+                    )
+                    sql = completion.choices[0].message.content or sql
+            except Exception as exc:
+                print(f"WARNING: Model request failed ({exc}). Using fallback.", flush=True)
 
-        # Strip markdown fences
-        sql = sql.replace("```sql", "").replace("```", "").strip()
+            sql = sql.replace("```sql", "").replace("```", "").strip()
 
-        try:
-            result      = env_step(task_id, sql)
-            observation = result["observation"]
-            reward      = result["reward"]["value"]
-            done        = result["done"]
-            score       = observation.get("score", 0.0)
-            best_score  = max(best_score, score)
+            try:
+                result = env_step(task_id, sql)
+                observation = result["observation"]
+                reward = result["reward"]["value"]
+                done = result["done"]
+                score = observation.get("score", 0.0)
+                best_score = max(best_score, score)
+                step += 1
+                print(f"[STEP] step={step} reward={reward:.4f}", flush=True)
+            except Exception as e:
+                print(f"WARNING: env_step failed: {e}", flush=True)
+                step += 1
+                print(f"[STEP] step={step} reward=0.0000", flush=True)
+                break
 
-            print(f"  Step {step+1}: score={score:.3f} reward={reward:.4f} done={done}")
-        except Exception as e:
-            print(f"  Step {step+1}: Environment error: {e}")
-            break
+            time.sleep(0.3)
 
-        step += 1
-        time.sleep(0.3)
+    except Exception as e:
+        print(f"WARNING: Task failed: {e}", flush=True)
+        step = max(step, 1)
+        print(f"[STEP] step={step} reward=0.0000", flush=True)
 
-    print(f"\nTask {task_id} done — best_score={best_score:.3f} steps={step}")
-    return {
-        "task_id":    task_id,
-        "best_score": round(best_score, 4),
-        "steps":      step,
-    }
-
+    print(f"[END] task={task_id} score={best_score:.4f} steps={step}", flush=True)
+    return {"task_id": task_id, "best_score": round(best_score, 4), "steps": step}
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    print("SQL Debugger — OpenEnv Baseline Inference")
-    print(f"Model:    {MODEL_NAME}")
-    print(f"Base URL: {API_BASE_URL}")
-    print(f"Env URL:  {ENV_URL}")
+    print("SQL Debugger — OpenEnv Baseline Inference", flush=True)
+    print(f"Model:    {MODEL_NAME}", flush=True)
+    print(f"Base URL: {API_BASE_URL}", flush=True)
+    print(f"Env URL:  {ENV_URL}", flush=True)
 
     results = {}
     for task_id in TASK_IDS:
-        try:
-            results[task_id] = run_task(task_id)
-        except Exception as e:
-            print(f"ERROR on task {task_id}: {e}")
-            results[task_id] = {"task_id": task_id, "best_score": 0.0, "steps": 0}
+        results[task_id] = run_task(task_id)
 
     avg_score = sum(r["best_score"] for r in results.values()) / len(results)
 
-    print(f"\n{'='*50}")
-    print("FINAL RESULTS")
-    print(f"{'='*50}")
+    print(f"\n{'='*50}", flush=True)
+    print("FINAL RESULTS", flush=True)
+    print(f"{'='*50}", flush=True)
     for tid, r in results.items():
-        print(f"  {tid:<15} best_score={r['best_score']:.3f}  steps={r['steps']}")
-    print(f"  {'AVERAGE':<15} {avg_score:.3f}")
+        print(f"  {tid:<15} best_score={r['best_score']:.3f}  steps={r['steps']}", flush=True)
+    print(f"  {'AVERAGE':<15} {avg_score:.3f}", flush=True)
 
     output = {
         "model":     MODEL_NAME,
@@ -222,8 +191,7 @@ def main():
 
     with open("baseline_results.json", "w") as f:
         json.dump(output, f, indent=2)
-    print("\nSaved to baseline_results.json")
-    return output
+    print("\nSaved to baseline_results.json", flush=True)
 
 
 if __name__ == "__main__":
