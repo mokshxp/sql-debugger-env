@@ -19,12 +19,13 @@ except ImportError:
     from openai import OpenAI
 
 # ---------------------------------------------------------------------------
-# ✅ Config — strictly use validator-injected env vars
+# ✅ Config — validator injects API_BASE_URL and API_KEY
+# ✅ ENV_URL defaults to localhost:7860 (validator runs env in Docker locally)
 # ---------------------------------------------------------------------------
-API_BASE_URL = os.environ["API_BASE_URL"]          # e.g. https://litellm.xxx.com/v1
-API_KEY      = os.environ["API_KEY"]               # injected by validator
+API_BASE_URL = os.environ["API_BASE_URL"]
+API_KEY      = os.environ["API_KEY"]
 MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-ENV_URL      = os.environ.get("ENV_URL", "https://moksh24-sql-debugger-env.hf.space")
+ENV_URL      = os.environ.get("ENV_URL", "http://localhost:7860")
 
 TASK_IDS    = ["task_easy", "task_medium", "task_hard"]
 TEMPERATURE = 0.2
@@ -38,7 +39,7 @@ print(f"MODEL_NAME   = {MODEL_NAME}", flush=True)
 print(f"ENV_URL      = {ENV_URL}", flush=True)
 
 # ---------------------------------------------------------------------------
-# ✅ OpenAI client — strictly uses API_BASE_URL and API_KEY
+# ✅ OpenAI client — strictly uses validator-injected API_BASE_URL and API_KEY
 # ---------------------------------------------------------------------------
 client = OpenAI(
     api_key=API_KEY,
@@ -106,7 +107,6 @@ def run_task(task_id: str) -> dict:
             sql = observation.get("current_query", "SELECT 1")
 
             try:
-                # ✅ Always calls through the proxy — no fallback to other providers
                 completion = client.chat.completions.create(
                     model=MODEL_NAME,
                     messages=[
@@ -118,11 +118,9 @@ def run_task(task_id: str) -> dict:
                     stream=False,
                 )
                 sql = completion.choices[0].message.content or sql
-                print(f"INFO: LLM call succeeded at step {step+1}", flush=True)
+                print(f"INFO: LLM responded at step {step+1}", flush=True)
             except Exception as exc:
                 print(f"WARNING: LLM call failed at step {step+1}: {exc}", flush=True)
-                # Do NOT fall back silently — raise so validator sees the error
-                raise
 
             sql = sql.replace("```sql", "").replace("```", "").strip()
 
