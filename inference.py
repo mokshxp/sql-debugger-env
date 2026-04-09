@@ -1,6 +1,5 @@
 """
 inference.py — Baseline inference script for SQL Debugger OpenEnv.
-Reads API_BASE_URL, MODEL_NAME, API_KEY from environment variables.
 """
 import os
 import json
@@ -20,13 +19,11 @@ except ImportError:
     from openai import OpenAI
 
 # ---------------------------------------------------------------------------
-# Config from environment variables
-# ✅ FIX 1: Use API_KEY (not HF_TOKEN) — this is what the validator injects
-# ✅ FIX 2: ENV_URL points to the actual HF Space, not localhost
+# ✅ Config — strictly use validator-injected env vars
 # ---------------------------------------------------------------------------
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
+API_BASE_URL = os.environ["API_BASE_URL"]          # e.g. https://litellm.xxx.com/v1
+API_KEY      = os.environ["API_KEY"]               # injected by validator
 MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-API_KEY      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", os.environ.get("OPENAI_API_KEY", "dummy-key")))
 ENV_URL      = os.environ.get("ENV_URL", "https://moksh24-sql-debugger-env.hf.space")
 
 TASK_IDS    = ["task_easy", "task_medium", "task_hard"]
@@ -36,25 +33,18 @@ MAX_TOKENS  = 512
 SYSTEM_PROMPT = """You are an expert SQL engineer. Debug and fix the given SQL query.
 Output ONLY the corrected SQL query — no explanations, no markdown, no backticks."""
 
-# ---------------------------------------------------------------------------
-# OpenAI client — always uses API_BASE_URL and API_KEY from environment
-# ---------------------------------------------------------------------------
-client = None
+print(f"API_BASE_URL = {API_BASE_URL}", flush=True)
+print(f"MODEL_NAME   = {MODEL_NAME}", flush=True)
+print(f"ENV_URL      = {ENV_URL}", flush=True)
 
-def get_client():
-    global client
-    if client is not None:
-        return client
-    try:
-        client = OpenAI(
-            api_key=API_KEY,
-            base_url=API_BASE_URL,
-            timeout=30.0,
-        )
-        return client
-    except Exception as e:
-        print(f"WARNING: Could not initialize OpenAI client: {e}", flush=True)
-        return None
+# ---------------------------------------------------------------------------
+# ✅ OpenAI client — strictly uses API_BASE_URL and API_KEY
+# ---------------------------------------------------------------------------
+client = OpenAI(
+    api_key=API_KEY,
+    base_url=API_BASE_URL,
+    timeout=60.0,
+)
 
 # ---------------------------------------------------------------------------
 # Environment client
@@ -100,7 +90,6 @@ Write the corrected SQL query:"""
 
 # ---------------------------------------------------------------------------
 # Run a single task
-# ✅ FIX 3: [START]/[STEP]/[END] always printed with flush=True
 # ---------------------------------------------------------------------------
 def run_task(task_id: str) -> dict:
     print(f"[START] task={task_id}", flush=True)
@@ -117,21 +106,23 @@ def run_task(task_id: str) -> dict:
             sql = observation.get("current_query", "SELECT 1")
 
             try:
-                c = get_client()
-                if c is not None:
-                    completion = c.chat.completions.create(
-                        model=MODEL_NAME,
-                        messages=[
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user", "content": build_user_prompt(observation)},
-                        ],
-                        temperature=TEMPERATURE,
-                        max_tokens=MAX_TOKENS,
-                        stream=False,
-                    )
-                    sql = completion.choices[0].message.content or sql
+                # ✅ Always calls through the proxy — no fallback to other providers
+                completion = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": build_user_prompt(observation)},
+                    ],
+                    temperature=TEMPERATURE,
+                    max_tokens=MAX_TOKENS,
+                    stream=False,
+                )
+                sql = completion.choices[0].message.content or sql
+                print(f"INFO: LLM call succeeded at step {step+1}", flush=True)
             except Exception as exc:
-                print(f"WARNING: Model request failed ({exc}). Using fallback.", flush=True)
+                print(f"WARNING: LLM call failed at step {step+1}: {exc}", flush=True)
+                # Do NOT fall back silently — raise so validator sees the error
+                raise
 
             sql = sql.replace("```sql", "").replace("```", "").strip()
 
