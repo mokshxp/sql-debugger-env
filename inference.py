@@ -19,11 +19,10 @@ except ImportError:
     from openai import OpenAI
 
 # ---------------------------------------------------------------------------
-# ✅ Config — validator injects API_BASE_URL and API_KEY
-# ✅ ENV_URL defaults to localhost:7860 (validator runs env in Docker locally)
+# Config — validator injects API_BASE_URL and API_KEY
 # ---------------------------------------------------------------------------
-API_BASE_URL = os.environ["API_BASE_URL"]
-API_KEY      = os.environ["API_KEY"]
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
+API_KEY      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", "dummy-key"))
 MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 ENV_URL      = os.environ.get("ENV_URL", "http://localhost:7860")
 
@@ -39,13 +38,25 @@ print(f"MODEL_NAME   = {MODEL_NAME}", flush=True)
 print(f"ENV_URL      = {ENV_URL}", flush=True)
 
 # ---------------------------------------------------------------------------
-# ✅ OpenAI client — strictly uses validator-injected API_BASE_URL and API_KEY
+# ✅ Client created lazily inside a function — never crashes at import time
 # ---------------------------------------------------------------------------
-client = OpenAI(
-    api_key=API_KEY,
-    base_url=API_BASE_URL,
-    timeout=60.0,
-)
+_client = None
+
+def get_client():
+    global _client
+    if _client is not None:
+        return _client
+    try:
+        _client = OpenAI(
+            api_key=API_KEY,
+            base_url=API_BASE_URL,
+            timeout=60.0,
+        )
+        print("INFO: OpenAI client initialized OK", flush=True)
+        return _client
+    except Exception as e:
+        print(f"WARNING: OpenAI client init failed: {e}", flush=True)
+        return None
 
 # ---------------------------------------------------------------------------
 # Environment client
@@ -107,18 +118,22 @@ def run_task(task_id: str) -> dict:
             sql = observation.get("current_query", "SELECT 1")
 
             try:
-                completion = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": build_user_prompt(observation)},
-                    ],
-                    temperature=TEMPERATURE,
-                    max_tokens=MAX_TOKENS,
-                    stream=False,
-                )
-                sql = completion.choices[0].message.content or sql
-                print(f"INFO: LLM responded at step {step+1}", flush=True)
+                c = get_client()
+                if c is not None:
+                    completion = c.chat.completions.create(
+                        model=MODEL_NAME,
+                        messages=[
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": build_user_prompt(observation)},
+                        ],
+                        temperature=TEMPERATURE,
+                        max_tokens=MAX_TOKENS,
+                        stream=False,
+                    )
+                    sql = completion.choices[0].message.content or sql
+                    print(f"INFO: LLM responded at step {step+1}", flush=True)
+                else:
+                    print(f"WARNING: No LLM client at step {step+1}", flush=True)
             except Exception as exc:
                 print(f"WARNING: LLM call failed at step {step+1}: {exc}", flush=True)
 
