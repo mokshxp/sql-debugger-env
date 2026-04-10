@@ -1,5 +1,6 @@
 """
 inference.py — Baseline inference script for SQL Debugger OpenEnv.
+Reads API_BASE_URL, MODEL_NAME, API_KEY from environment variables.
 """
 import os
 import json
@@ -22,7 +23,7 @@ except ImportError:
 # Config — validator injects API_BASE_URL and API_KEY
 # ---------------------------------------------------------------------------
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-API_KEY      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", "dummy-key"))
+API_KEY      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", os.environ.get("OPENAI_API_KEY", "dummy-key")))
 MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 ENV_URL      = os.environ.get("ENV_URL", "http://localhost:7860")
 
@@ -47,8 +48,13 @@ def get_client():
     if _client is not None:
         return _client
     try:
+        if not API_KEY or API_KEY == "dummy-key":
+            print("WARNING: API_KEY not set. Using dummy token for testing.", flush=True)
+            token = "dummy-token"
+        else:
+            token = API_KEY
         _client = OpenAI(
-            api_key=API_KEY,
+            api_key=token,
             base_url=API_BASE_URL,
             timeout=60.0,
         )
