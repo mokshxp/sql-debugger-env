@@ -7,7 +7,7 @@ import time
 import sys
 import subprocess
 
-# Install compatible versions first
+# Install compatible versions
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q",
     "openai==1.35.3",
@@ -58,15 +58,31 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
 client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 # ---------------------------------------------------------------------------
-# Env client
+# Env client — try HF Space URL if localhost fails
 # ---------------------------------------------------------------------------
-def env_reset(task_id):
-    r = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30)
+def get_env_url():
+    """Try localhost first, then HF Space URL."""
+    urls_to_try = [
+        ENV_URL,
+        "https://moksh24-sql-debugger-env.hf.space",
+    ]
+    for url in urls_to_try:
+        try:
+            r = requests.get(f"{url}/health", timeout=10)
+            if r.status_code == 200:
+                print(f"[DEBUG] Connected to env at {url}", flush=True)
+                return url
+        except Exception:
+            continue
+    raise RuntimeError(f"Could not connect to environment at any URL: {urls_to_try}")
+
+def env_reset(base_url, task_id):
+    r = requests.post(f"{base_url}/reset", json={"task_id": task_id}, timeout=30)
     r.raise_for_status()
     return r.json()
 
-def env_step(task_id, sql):
-    r = requests.post(f"{ENV_URL}/step", json={"task_id": task_id, "sql": sql}, timeout=30)
+def env_step(base_url, task_id, sql):
+    r = requests.post(f"{base_url}/step", json={"task_id": task_id, "sql": sql}, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -98,9 +114,9 @@ Write the corrected SQL query:"""
 # ---------------------------------------------------------------------------
 # Run task
 # ---------------------------------------------------------------------------
-def run_task(task_id):
+def run_task(base_url, task_id):
     log_start(task=task_id, model=MODEL_NAME)
-    obs      = env_reset(task_id)
+    obs       = env_reset(base_url, task_id)
     max_steps = obs.get("max_steps", 10)
     done      = False
     step      = 0
@@ -121,7 +137,7 @@ def run_task(task_id):
             sql = completion.choices[0].message.content or ""
             sql = sql.replace("```sql", "").replace("```", "").strip()
 
-            result  = env_step(task_id, sql)
+            result  = env_step(base_url, task_id, sql)
             obs     = result["observation"]
             reward  = result["reward"]["value"]
             done    = result["done"]
@@ -145,15 +161,24 @@ def run_task(task_id):
 # ---------------------------------------------------------------------------
 def main():
     print(f"SQL Debugger — OpenEnv Inference | model={MODEL_NAME}", flush=True)
+    
+    # Find working env URL
+    base_url = get_env_url()
+    print(f"Using env URL: {base_url}", flush=True)
+
     results = {}
     for task_id in TASK_IDS:
-        results[task_id] = run_task(task_id)
+        results[task_id] = run_task(base_url, task_id)
 
     avg = sum(r["best_score"] for r in results.values()) / len(results)
     print(f"\nAVERAGE SCORE: {avg:.3f}", flush=True)
 
     with open("baseline_results.json", "w") as f:
-        json.dump({"model": MODEL_NAME, "avg_score": round(avg,4), "results": results}, f, indent=2)
+        json.dump({
+            "model": MODEL_NAME,
+            "avg_score": round(avg, 4),
+            "results": results
+        }, f, indent=2)
     print("Saved baseline_results.json", flush=True)
 
 if __name__ == "__main__":
