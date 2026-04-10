@@ -44,25 +44,12 @@ print(f"MODEL_NAME   = {MODEL_NAME}", flush=True)
 print(f"ENV_URL      = {ENV_URL}", flush=True)
 
 # ---------------------------------------------------------------------------
-# ✅ Client created lazily inside a function — never crashes at import time
+# Client initialization
 # ---------------------------------------------------------------------------
-_client = None
-
-def get_client():
-    global _client
-    if _client is not None:
-        return _client
-    try:
-        _client = OpenAI(
-            base_url=os.environ["API_BASE_URL"],
-            api_key=os.environ["API_KEY"],
-            timeout=60.0,
-        )
-        print("INFO: OpenAI client initialized OK", flush=True)
-        return _client
-    except Exception as e:
-        print(f"WARNING: OpenAI client init failed: {e}", flush=True)
-        return None
+client = OpenAI(
+    base_url=os.environ["API_BASE_URL"],
+    api_key=os.environ["API_KEY"]
+)
 
 # ---------------------------------------------------------------------------
 # Environment client
@@ -123,25 +110,19 @@ def run_task(task_id: str) -> dict:
         while not done and step < max_steps:
             sql = observation.get("current_query", "SELECT 1")
 
-            try:
-                c = get_client()
-                if c is not None:
-                    completion = c.chat.completions.create(
-                        model=MODEL_NAME,
-                        messages=[
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user", "content": build_user_prompt(observation)},
-                        ],
-                        temperature=TEMPERATURE,
-                        max_tokens=MAX_TOKENS,
-                        stream=False,
-                    )
-                    sql = completion.choices[0].message.content or sql
-                    print(f"INFO: LLM responded at step {step+1}", flush=True)
-                else:
-                    print(f"WARNING: No LLM client at step {step+1}", flush=True)
-            except Exception as exc:
-                print(f"WARNING: LLM call failed at step {step+1}: {exc}", flush=True)
+            # Allow exceptions to propagate (don't swallow LLM failures)
+            completion = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": build_user_prompt(observation)},
+                ],
+                temperature=TEMPERATURE,
+                max_tokens=MAX_TOKENS,
+                stream=False,
+            )
+            sql = completion.choices[0].message.content or sql
+            print(f"INFO: LLM responded at step {step+1}", flush=True)
 
             sql = sql.replace("```sql", "").replace("```", "").strip()
 
@@ -166,6 +147,8 @@ def run_task(task_id: str) -> dict:
         print(f"WARNING: Task failed: {e}", flush=True)
         step = max(step, 1)
         print(f"[STEP] step={step} reward=0.0000", flush=True)
+        print(f"[END] task={task_id} score={best_score:.4f} steps={step}", flush=True)
+        raise e
 
     print(f"[END] task={task_id} score={best_score:.4f} steps={step}", flush=True)
     return {"task_id": task_id, "best_score": round(best_score, 4), "steps": step}
