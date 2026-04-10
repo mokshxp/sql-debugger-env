@@ -22,8 +22,13 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Config — validator injects API_BASE_URL and API_KEY
 # ---------------------------------------------------------------------------
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-API_KEY      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", os.environ.get("OPENAI_API_KEY", "dummy-key")))
+if "API_BASE_URL" not in os.environ:
+    os.environ["API_BASE_URL"] = "https://api.openai.com/v1"
+if "API_KEY" not in os.environ:
+    os.environ["API_KEY"] = os.environ.get("HF_TOKEN", os.environ.get("OPENAI_API_KEY", "dummy-key"))
+
+API_BASE_URL = os.environ["API_BASE_URL"]
+API_KEY      = os.environ["API_KEY"]
 MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 ENV_URL      = os.environ.get("ENV_URL", "http://localhost:7860")
 
@@ -48,14 +53,9 @@ def get_client():
     if _client is not None:
         return _client
     try:
-        if not API_KEY or API_KEY == "dummy-key":
-            print("WARNING: API_KEY not set. Using dummy token for testing.", flush=True)
-            token = "dummy-token"
-        else:
-            token = API_KEY
         _client = OpenAI(
-            api_key=token,
-            base_url=API_BASE_URL,
+            base_url=os.environ["API_BASE_URL"],
+            api_key=os.environ["API_KEY"],
             timeout=60.0,
         )
         print("INFO: OpenAI client initialized OK", flush=True)
