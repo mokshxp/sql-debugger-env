@@ -1,93 +1,92 @@
 """
 inference.py — Baseline inference script for SQL Debugger OpenEnv.
-Reads API_BASE_URL, MODEL_NAME, API_KEY from environment variables.
+Strictly follows Phase 2 deep validation log format requirements.
 """
 import os
 import json
 import time
 import sys
-
-try:
-    import requests
-except ImportError:
-    os.system(f"{sys.executable} -m pip install requests -q")
-    import requests
-
-try:
-    from openai import OpenAI
-except ImportError:
-    os.system(f"{sys.executable} -m pip install openai -q")
-    from openai import OpenAI
+import requests
+from openai import OpenAI
 
 # ---------------------------------------------------------------------------
-# Config — validator injects API_BASE_URL and API_KEY
+# Config — validator injects these variables
 # ---------------------------------------------------------------------------
-if "API_BASE_URL" not in os.environ:
-    os.environ["API_BASE_URL"] = "https://api.openai.com/v1"
-if "API_KEY" not in os.environ:
-    os.environ["API_KEY"] = os.environ.get("HF_TOKEN", os.environ.get("OPENAI_API_KEY", "dummy-key"))
-
 API_BASE_URL = os.environ["API_BASE_URL"]
 API_KEY      = os.environ["API_KEY"]
 MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 ENV_URL      = os.environ.get("ENV_URL", "http://localhost:7860")
 
-TASK_IDS    = ["task_easy", "task_medium", "task_hard"]
-TEMPERATURE = 0.2
-MAX_TOKENS  = 512
+TASK_IDS     = ["task_easy", "task_medium", "task_hard"]
+TEMPERATURE  = 0.2
+MAX_TOKENS   = 512
+MAX_STEPS    = 10
 
 SYSTEM_PROMPT = """You are an expert SQL engineer. Debug and fix the given SQL query.
 Output ONLY the corrected SQL query — no explanations, no markdown, no backticks."""
 
-print(f"API_BASE_URL = {API_BASE_URL}", flush=True)
-print(f"MODEL_NAME   = {MODEL_NAME}", flush=True)
-print(f"ENV_URL      = {ENV_URL}", flush=True)
+# ---------------------------------------------------------------------------
+# Structured logging (required by validator)
+# ---------------------------------------------------------------------------
+def log_start(task: str, model: str) -> None:
+    print(json.dumps({
+        "type": "START",
+        "task": task,
+        "model": model,
+    }), flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error=None) -> None:
+    print(json.dumps({
+        "type": "STEP",
+        "step": step,
+        "action": action[:200],
+        "reward": reward,
+        "done": done,
+        "error": str(error) if error else None,
+    }), flush=True)
+
+
+def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
+    print(json.dumps({
+        "type": "END",
+        "success": success,
+        "steps": steps,
+        "score": score,
+        "rewards": rewards,
+    }), flush=True)
+
 
 # ---------------------------------------------------------------------------
-# Client initialization
+# OpenAI client — strict global init, fails loudly if broken
 # ---------------------------------------------------------------------------
-_client = None
-
-def get_client():
-    global _client
-    if _client is not None:
-        return _client
-    
-    # Robustly parse base_url
-    api_base = os.environ.get("API_BASE_URL", "https://api.openai.com/v1").strip()
-    if api_base and not (api_base.startswith("http://") or api_base.startswith("https://")):
-        api_base = "http://" + api_base
-        
-    api_key = os.environ.get("API_KEY", "dummy").strip()
-    
-    _client = OpenAI(
-        base_url=api_base,
-        api_key=api_key,
-        timeout=60.0
-    )
-    return _client
+client = OpenAI(
+    base_url=API_BASE_URL,
+    api_key=API_KEY,
+)
 
 # ---------------------------------------------------------------------------
-# Environment client
+# Environment HTTP client
 # ---------------------------------------------------------------------------
 def env_reset(task_id: str) -> dict:
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            r = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30)
-            r.raise_for_status()
-            return r.json()
-        except requests.exceptions.RequestException as e:
-            if attempt == max_retries - 1:
-                raise e
-            print(f"WARNING: env_reset failed on attempt {attempt+1}, retrying... ({e})", flush=True)
-            time.sleep(2.0)
-    return {}
-
-def env_step(task_id: str, sql: str) -> dict:
-    r = requests.post(f"{ENV_URL}/step", json={"task_id": task_id, "sql": sql}, timeout=30)
+    r = requests.post(
+        f"{ENV_URL}/reset",
+        json={"task_id": task_id},
+        timeout=30,
+    )
     r.raise_for_status()
     return r.json()
+
+
+def env_step(task_id: str, sql: str) -> dict:
+    r = requests.post(
+        f"{ENV_URL}/step",
+        json={"task_id": task_id, "sql": sql},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
+
 
 # ---------------------------------------------------------------------------
 # Prompt builder
@@ -101,103 +100,86 @@ def build_user_prompt(observation: dict) -> str:
 BUSINESS REQUIREMENT:
 {observation.get('business_requirement', '')}
 
-CURRENT QUERY (step {observation.get('step', 0)}/{observation.get('max_steps', 10)}):
+CURRENT QUERY:
 {observation.get('current_query', '')}
 
 EXECUTION RESULT:
 Success: {exec_res.get('success')}
 Error: {exec_res.get('error') or 'None'}
-Row count: {exec_res.get('row_count', 0)}
-Sample rows:
-{json.dumps(rows, indent=2)}
+Sample rows: {json.dumps(rows)}
 
 GRADER FEEDBACK:
 {observation.get('feedback', '')}
 
-Current score: {observation.get('score', 0.0):.3f}
-
 Write the corrected SQL query:"""
 
+
 # ---------------------------------------------------------------------------
-# Run a single task
+# Run a single task episode
 # ---------------------------------------------------------------------------
 def run_task(task_id: str) -> dict:
-    print(f"[START] task={task_id}", flush=True)
+    log_start(task=task_id, model=MODEL_NAME)
 
-    best_score = 0.0
-    step = 0
+    observation  = env_reset(task_id)
+    max_steps    = observation.get("max_steps", MAX_STEPS)
+    done         = False
+    step         = 0
+    best_score   = 0.0
+    rewards      = []
+    success      = False
 
     try:
-        observation = env_reset(task_id)
-        max_steps = observation.get("max_steps", 10)
-        done = False
-
         while not done and step < max_steps:
-            sql = observation.get("current_query", "SELECT 1")
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": build_user_prompt(observation)},
+            ]
 
-            # Allow exceptions to propagate (don't swallow LLM failures)
-            client = get_client()
-            
-            # Retry mechanism for the LLM network call
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    completion = client.chat.completions.create(
-                        model=MODEL_NAME,
-                        messages=[
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user", "content": build_user_prompt(observation)},
-                        ],
-                        temperature=TEMPERATURE,
-                        max_tokens=MAX_TOKENS,
-                        stream=False,
-                    )
-                    sql = completion.choices[0].message.content or sql
-                    print(f"INFO: LLM responded at step {step+1} (Attempt {attempt+1})", flush=True)
-                    break
-                except Exception as e:
-                    print(f"WARNING: LLM call failed on attempt {attempt+1}: {e}", flush=True)
-                    if attempt == max_retries - 1:
-                        raise e
-                    time.sleep(1.0)
-            
+            # LLM call — exceptions propagate loudly
+            completion = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=messages,
+                temperature=TEMPERATURE,
+                max_tokens=MAX_TOKENS,
+                stream=False,
+            )
+            sql = completion.choices[0].message.content or ""
             sql = sql.replace("```sql", "").replace("```", "").strip()
 
-            try:
-                result = env_step(task_id, sql)
-                observation = result["observation"]
-                reward = result["reward"]["value"]
-                done = result["done"]
-                score = observation.get("score", 0.0)
-                best_score = max(best_score, score)
-                step += 1
-                print(f"[STEP] step={step} reward={reward:.4f}", flush=True)
-            except Exception as e:
-                print(f"WARNING: env_step failed: {e}", flush=True)
-                step += 1
-                print(f"[STEP] step={step} reward=0.0000", flush=True)
-                break
+            result      = env_step(task_id, sql)
+            observation = result["observation"]
+            reward      = result["reward"]["value"]
+            done        = result["done"]
+            score       = observation.get("score", 0.0)
+            best_score  = max(best_score, score)
+            rewards.append(reward)
 
+            log_step(step=step+1, action=sql, reward=reward, done=done)
+
+            step += 1
             time.sleep(0.3)
 
+        success = best_score >= 0.6
+
     except Exception as e:
-        print(f"WARNING: Task failed: {e}", flush=True)
-        step = max(step, 1)
-        print(f"[STEP] step={step} reward=0.0000", flush=True)
-        print(f"[END] task={task_id} score={best_score:.4f} steps={step}", flush=True)
+        log_end(success=False, steps=step, score=best_score, rewards=rewards)
         raise e
 
-    print(f"[END] task={task_id} score={best_score:.4f} steps={step}", flush=True)
-    return {"task_id": task_id, "best_score": round(best_score, 4), "steps": step}
+    log_end(success=success, steps=step, score=best_score, rewards=rewards)
+
+    return {
+        "task_id":    task_id,
+        "best_score": round(best_score, 4),
+        "steps":      step,
+    }
+
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    print("SQL Debugger — OpenEnv Baseline Inference", flush=True)
-    print(f"Model:    {MODEL_NAME}", flush=True)
-    print(f"Base URL: {API_BASE_URL}", flush=True)
-    print(f"Env URL:  {ENV_URL}", flush=True)
+    print(f"SQL Debugger — OpenEnv Baseline Inference", flush=True)
+    print(f"Model: {MODEL_NAME} | Base URL: {API_BASE_URL}", flush=True)
 
     results = {}
     for task_id in TASK_IDS:
@@ -205,23 +187,18 @@ def main():
 
     avg_score = sum(r["best_score"] for r in results.values()) / len(results)
 
-    print(f"\n{'='*50}", flush=True)
-    print("FINAL RESULTS", flush=True)
-    print(f"{'='*50}", flush=True)
+    print(f"\nFINAL RESULTS", flush=True)
     for tid, r in results.items():
-        print(f"  {tid:<15} best_score={r['best_score']:.3f}  steps={r['steps']}", flush=True)
-    print(f"  {'AVERAGE':<15} {avg_score:.3f}", flush=True)
-
-    output = {
-        "model":     MODEL_NAME,
-        "api_base":  API_BASE_URL,
-        "avg_score": round(avg_score, 4),
-        "results":   results,
-    }
+        print(f"  {tid}: best_score={r['best_score']:.3f} steps={r['steps']}", flush=True)
+    print(f"  AVERAGE: {avg_score:.3f}", flush=True)
 
     with open("baseline_results.json", "w") as f:
-        json.dump(output, f, indent=2)
-    print("\nSaved to baseline_results.json", flush=True)
+        json.dump({
+            "model":     MODEL_NAME,
+            "avg_score": round(avg_score, 4),
+            "results":   results,
+        }, f, indent=2)
+    print("Saved to baseline_results.json", flush=True)
 
 
 if __name__ == "__main__":
