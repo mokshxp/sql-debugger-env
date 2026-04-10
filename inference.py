@@ -46,18 +46,43 @@ print(f"ENV_URL      = {ENV_URL}", flush=True)
 # ---------------------------------------------------------------------------
 # Client initialization
 # ---------------------------------------------------------------------------
-client = OpenAI(
-    base_url=os.environ["API_BASE_URL"],
-    api_key=os.environ["API_KEY"]
-)
+_client = None
+
+def get_client():
+    global _client
+    if _client is not None:
+        return _client
+    
+    # Robustly parse base_url
+    api_base = os.environ.get("API_BASE_URL", "https://api.openai.com/v1").strip()
+    if api_base and not (api_base.startswith("http://") or api_base.startswith("https://")):
+        api_base = "http://" + api_base
+        
+    api_key = os.environ.get("API_KEY", "dummy").strip()
+    
+    _client = OpenAI(
+        base_url=api_base,
+        api_key=api_key,
+        timeout=60.0
+    )
+    return _client
 
 # ---------------------------------------------------------------------------
 # Environment client
 # ---------------------------------------------------------------------------
 def env_reset(task_id: str) -> dict:
-    r = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            r = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.RequestException as e:
+            if attempt == max_retries - 1:
+                raise e
+            print(f"WARNING: env_reset failed on attempt {attempt+1}, retrying... ({e})", flush=True)
+            time.sleep(2.0)
+    return {}
 
 def env_step(task_id: str, sql: str) -> dict:
     r = requests.post(f"{ENV_URL}/step", json={"task_id": task_id, "sql": sql}, timeout=30)
@@ -111,19 +136,31 @@ def run_task(task_id: str) -> dict:
             sql = observation.get("current_query", "SELECT 1")
 
             # Allow exceptions to propagate (don't swallow LLM failures)
-            completion = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": build_user_prompt(observation)},
-                ],
-                temperature=TEMPERATURE,
-                max_tokens=MAX_TOKENS,
-                stream=False,
-            )
-            sql = completion.choices[0].message.content or sql
-            print(f"INFO: LLM responded at step {step+1}", flush=True)
-
+            client = get_client()
+            
+            # Retry mechanism for the LLM network call
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    completion = client.chat.completions.create(
+                        model=MODEL_NAME,
+                        messages=[
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": build_user_prompt(observation)},
+                        ],
+                        temperature=TEMPERATURE,
+                        max_tokens=MAX_TOKENS,
+                        stream=False,
+                    )
+                    sql = completion.choices[0].message.content or sql
+                    print(f"INFO: LLM responded at step {step+1} (Attempt {attempt+1})", flush=True)
+                    break
+                except Exception as e:
+                    print(f"WARNING: LLM call failed on attempt {attempt+1}: {e}", flush=True)
+                    if attempt == max_retries - 1:
+                        raise e
+                    time.sleep(1.0)
+            
             sql = sql.replace("```sql", "").replace("```", "").strip()
 
             try:
