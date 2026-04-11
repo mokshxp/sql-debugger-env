@@ -1,6 +1,5 @@
 """
 inference.py — SQL Debugger OpenEnv baseline inference script.
-Strictly follows the sample inference.py format from the hackathon.
 """
 from __future__ import annotations
 
@@ -18,12 +17,12 @@ from openai import OpenAI
 # ---------------------------------------------------------------------------
 API_BASE_URL     = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME       = os.getenv("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN         = os.getenv("HF_TOKEN")          # No default — validator injects this
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")  # Optional
+HF_TOKEN         = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
-ENV_URL     = os.getenv("ENV_URL", "http://localhost:7860")
-TASK_IDS    = ["task_easy", "task_medium", "task_hard"]
-MAX_STEPS   = 10
+ENV_URL    = os.getenv("ENV_URL", "http://localhost:7860")
+TASK_IDS   = ["task_easy", "task_medium", "task_hard"]
+MAX_STEPS  = 10
 TEMPERATURE = 0.2
 MAX_TOKENS  = 512
 SUCCESS_SCORE_THRESHOLD = 0.6
@@ -32,42 +31,65 @@ SYSTEM_PROMPT = """You are an expert SQL engineer. Debug and fix the given SQL q
 Output ONLY the corrected SQL query — no explanations, no markdown, no backticks."""
 
 # ---------------------------------------------------------------------------
-# Structured logging — strictly following START/STEP/END format
+# Structured logging
 # ---------------------------------------------------------------------------
 def log_start(task: str, env: str, model: str) -> None:
-    print(json.dumps({
-        "type":  "START",
-        "task":  task,
-        "env":   env,
-        "model": model,
-    }), flush=True)
-
+    print(json.dumps({"type": "START", "task": task, "env": env, "model": model}), flush=True)
 
 def log_step(step: int, action: str, reward: float, done: bool, error=None) -> None:
     print(json.dumps({
-        "type":   "STEP",
-        "step":   step,
-        "action": action[:300],
-        "reward": reward,
-        "done":   done,
-        "error":  str(error) if error else None,
+        "type": "STEP", "step": step,
+        "action": action[:300], "reward": reward,
+        "done": done, "error": str(error) if error else None,
     }), flush=True)
-
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     print(json.dumps({
-        "type":    "END",
-        "success": success,
-        "steps":   steps,
-        "score":   score,
-        "rewards": rewards,
+        "type": "END", "success": success,
+        "steps": steps, "score": score, "rewards": rewards,
     }), flush=True)
 
+# ---------------------------------------------------------------------------
+# Wait for env to be ready
+# ---------------------------------------------------------------------------
+def wait_for_env(max_wait: int = 120) -> None:
+    print(f"[DEBUG] Waiting for env at {ENV_URL}...", flush=True)
+    for i in range(max_wait):
+        try:
+            r = requests.get(f"{ENV_URL}/health", timeout=5)
+            if r.status_code == 200:
+                print(f"[DEBUG] Env ready after {i}s", flush=True)
+                return
+        except Exception:
+            pass
+        time.sleep(1)
+    raise RuntimeError(f"Env not reachable at {ENV_URL} after {max_wait}s")
+
+# ---------------------------------------------------------------------------
+# Env HTTP helpers
+# ---------------------------------------------------------------------------
+def env_reset(task_id: str) -> dict:
+    r = requests.post(
+        f"{ENV_URL}/reset",
+        json={"task_id": task_id},
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json()
+
+def env_step(task_id: str, sql: str) -> dict:
+    r = requests.post(
+        f"{ENV_URL}/step",
+        json={"task_id": task_id, "sql": sql},
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json()
 
 # ---------------------------------------------------------------------------
 # Model call
 # ---------------------------------------------------------------------------
-def get_model_message(client: OpenAI, obs: dict, history: List[str]) -> str:
+def get_model_message(client: OpenAI, obs: dict) -> str:
     exec_res = obs.get("execution_result", {})
     rows = exec_res.get("rows", [])[:5]
 
@@ -95,53 +117,21 @@ Write the corrected SQL query:"""
             model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": user_prompt},
+                {"role": "user", "content": user_prompt},
             ],
             temperature=TEMPERATURE,
             max_tokens=MAX_TOKENS,
         )
         sql = completion.choices[0].message.content or ""
-        sql = sql.replace("```sql", "").replace("```", "").strip()
-        return sql
+        return sql.replace("```sql", "").replace("```", "").strip()
     except Exception as exc:
         print(f"[DEBUG] Model request failed: {exc}", flush=True)
         return obs.get("current_query", "SELECT 1")
 
-
 # ---------------------------------------------------------------------------
-# Env HTTP helpers
-# ---------------------------------------------------------------------------
-def env_reset(task_id: str) -> dict:
-    r = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=60)
-    r.raise_for_status()
-    return r.json()
-
-
-def env_step(task_id: str, sql: str) -> dict:
-    r = requests.post(f"{ENV_URL}/step", json={"task_id": task_id, "sql": sql}, timeout=60)
-    r.raise_for_status()
-    return r.json()
-
-
-def wait_for_env(max_wait: int = 120) -> None:
-    print(f"[DEBUG] Waiting for env at {ENV_URL}...", flush=True)
-    for i in range(max_wait):
-        try:
-            r = requests.get(f"{ENV_URL}/health", timeout=5)
-            if r.status_code == 200:
-                print(f"[DEBUG] Env ready after {i}s", flush=True)
-                return
-        except Exception:
-            pass
-        time.sleep(1)
-    raise RuntimeError(f"Env not reachable at {ENV_URL} after {max_wait}s")
-
-
-# ---------------------------------------------------------------------------
-# Main — async to match sample inference.py pattern
+# Main
 # ---------------------------------------------------------------------------
 async def main() -> None:
-    # OpenAI client — using API_BASE_URL and HF_TOKEN as required
     api_key = HF_TOKEN or "dummy-key"
     client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
 
@@ -151,7 +141,6 @@ async def main() -> None:
     all_results = []
 
     for task_id in TASK_IDS:
-        history: List[str] = []
         rewards: List[float] = []
         steps_taken = 0
         score = 0.0
@@ -160,34 +149,30 @@ async def main() -> None:
         log_start(task=task_id, env="sql-debugger", model=MODEL_NAME)
 
         try:
-            obs = env_reset(task_id)
-            last_reward = 0.0
+            obs  = env_reset(task_id)
             done = False
 
             for step in range(1, MAX_STEPS + 1):
                 if done:
                     break
 
-                action = get_model_message(client, obs, history)
+                action = get_model_message(client, obs)
+                result = env_step(task_id, action)
 
-                result  = env_step(task_id, action)
-                obs     = result["observation"]
-                reward  = result["reward"]["value"] if result.get("reward") else 0.0
-                done    = result.get("done", False)
-                error   = None
+                obs    = result["observation"]
+                reward = result["reward"]["value"] if result.get("reward") else 0.0
+                done   = result.get("done", False)
+                score  = obs.get("score", 0.0)
 
                 rewards.append(reward)
                 steps_taken = step
-                last_reward = reward
-                score = obs.get("score", 0.0)
 
-                log_step(step=step, action=action, reward=reward, done=done, error=error)
-                history.append(f"Step {step}: reward {reward:+.2f}")
+                log_step(step=step, action=action, reward=reward, done=done, error=None)
 
                 if done:
                     break
 
-            score = min(max(score, 0.0), 1.0)
+            score   = min(max(score, 0.0), 1.0)
             success = score >= SUCCESS_SCORE_THRESHOLD
 
         finally:
