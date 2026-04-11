@@ -120,9 +120,18 @@ Write the corrected SQL query:"""
 def main() -> None:
     print(f"[DEBUG] Starting inference | model={MODEL_NAME} env={ENV_URL}", flush=True)
 
-    # Strict initialization: if this fails, the script will crash (desired behavior)
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    print(f"[DEBUG] OpenAI client initialized with base_url={API_BASE_URL}", flush=True)
+    # Strict initialization with robust URL handling
+    try:
+        base_url = API_BASE_URL.strip()
+        if base_url and not base_url.startswith("http"):
+            base_url = f"http://{base_url}"
+            
+        client = OpenAI(base_url=base_url, api_key=API_KEY)
+        print(f"[DEBUG] OpenAI client initialized with base_url={base_url}", flush=True)
+    except Exception as e:
+        print(f"[ERROR] Fatal error initializing OpenAI client: {e}", flush=True)
+        import sys
+        sys.exit(1)
 
     wait_for_env(max_wait=60)
 
