@@ -3,7 +3,6 @@ inference.py — SQL Debugger OpenEnv baseline inference script.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import time
@@ -13,16 +12,16 @@ import requests
 from openai import OpenAI
 
 # ---------------------------------------------------------------------------
-# Environment variables — exactly as required by the checklist
+# Environment variables
 # ---------------------------------------------------------------------------
 API_BASE_URL     = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME       = os.getenv("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN         = os.getenv("HF_TOKEN")
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+HF_TOKEN         = os.getenv("HF_TOKEN", "dummy-key")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
+ENV_URL          = os.getenv("ENV_URL", "http://localhost:7860")
 
-ENV_URL    = os.getenv("ENV_URL", "http://localhost:7860")
-TASK_IDS   = ["task_easy", "task_medium", "task_hard"]
-MAX_STEPS  = 10
+TASK_IDS    = ["task_easy", "task_medium", "task_hard"]
+MAX_STEPS   = 10
 TEMPERATURE = 0.2
 MAX_TOKENS  = 512
 SUCCESS_SCORE_THRESHOLD = 0.6
@@ -50,9 +49,9 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     }), flush=True)
 
 # ---------------------------------------------------------------------------
-# Wait for env to be ready
+# Wait for env
 # ---------------------------------------------------------------------------
-def wait_for_env(max_wait: int = 120) -> None:
+def wait_for_env(max_wait: int = 60) -> None:
     print(f"[DEBUG] Waiting for env at {ENV_URL}...", flush=True)
     for i in range(max_wait):
         try:
@@ -63,26 +62,18 @@ def wait_for_env(max_wait: int = 120) -> None:
         except Exception:
             pass
         time.sleep(1)
-    raise RuntimeError(f"Env not reachable at {ENV_URL} after {max_wait}s")
+    print(f"[DEBUG] Env not ready after {max_wait}s — proceeding anyway", flush=True)
 
 # ---------------------------------------------------------------------------
 # Env HTTP helpers
 # ---------------------------------------------------------------------------
 def env_reset(task_id: str) -> dict:
-    r = requests.post(
-        f"{ENV_URL}/reset",
-        json={"task_id": task_id},
-        timeout=60,
-    )
+    r = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=60)
     r.raise_for_status()
     return r.json()
 
 def env_step(task_id: str, sql: str) -> dict:
-    r = requests.post(
-        f"{ENV_URL}/step",
-        json={"task_id": task_id, "sql": sql},
-        timeout=60,
-    )
+    r = requests.post(f"{ENV_URL}/step", json={"task_id": task_id, "sql": sql}, timeout=60)
     r.raise_for_status()
     return r.json()
 
@@ -92,7 +83,6 @@ def env_step(task_id: str, sql: str) -> dict:
 def get_model_message(client: OpenAI, obs: dict) -> str:
     exec_res = obs.get("execution_result", {})
     rows = exec_res.get("rows", [])[:5]
-
     user_prompt = f"""DATABASE SCHEMA:
 {obs.get('db_schema', '')}
 
@@ -129,21 +119,26 @@ Write the corrected SQL query:"""
         return obs.get("current_query", "SELECT 1")
 
 # ---------------------------------------------------------------------------
-# Main
+# Main — synchronous, no asyncio
 # ---------------------------------------------------------------------------
-async def main() -> None:
-    api_key = HF_TOKEN or "dummy-key"
-    client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
+def main() -> None:
+    print(f"[DEBUG] Starting inference | model={MODEL_NAME} env={ENV_URL}", flush=True)
 
-    # Wait for environment container to be ready
-    wait_for_env(max_wait=120)
+    try:
+        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+        print(f"[DEBUG] OpenAI client initialized", flush=True)
+    except Exception as e:
+        print(f"[DEBUG] OpenAI client init failed: {e}", flush=True)
+        client = None
+
+    wait_for_env(max_wait=60)
 
     all_results = []
 
     for task_id in TASK_IDS:
         rewards: List[float] = []
         steps_taken = 0
-        score = 0.0
+        score   = 0.0
         success = False
 
         log_start(task=task_id, env="sql-debugger", model=MODEL_NAME)
@@ -156,9 +151,12 @@ async def main() -> None:
                 if done:
                     break
 
-                action = get_model_message(client, obs)
-                result = env_step(task_id, action)
+                if client:
+                    action = get_model_message(client, obs)
+                else:
+                    action = obs.get("current_query", "SELECT 1")
 
+                result = env_step(task_id, action)
                 obs    = result["observation"]
                 reward = result["reward"]["value"] if result.get("reward") else 0.0
                 done   = result.get("done", False)
@@ -167,13 +165,16 @@ async def main() -> None:
                 rewards.append(reward)
                 steps_taken = step
 
-                log_step(step=step, action=action, reward=reward, done=done, error=None)
+                log_step(step=step, action=action, reward=reward, done=done)
 
                 if done:
                     break
 
             score   = min(max(score, 0.0), 1.0)
             success = score >= SUCCESS_SCORE_THRESHOLD
+
+        except Exception as e:
+            print(f"[DEBUG] Task {task_id} error: {e}", flush=True)
 
         finally:
             log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
@@ -182,7 +183,6 @@ async def main() -> None:
             "task_id": task_id,
             "score":   round(score, 4),
             "steps":   steps_taken,
-            "success": success,
         })
 
     avg = sum(r["score"] for r in all_results) / len(all_results)
@@ -194,8 +194,8 @@ async def main() -> None:
             "avg_score": round(avg, 4),
             "results":   all_results,
         }, f, indent=2)
-    print("[DEBUG] Saved baseline_results.json", flush=True)
+    print("[DEBUG] Done", flush=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
