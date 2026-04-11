@@ -1,15 +1,12 @@
+#!/usr/bin/env python3
 """
 inference.py — SQL Debugger OpenEnv baseline inference script.
 """
 from __future__ import annotations
-
-import json
 import os
+import sys
+import json
 import time
-from typing import List, Any
-
-import requests
-from openai import OpenAI
 
 # ---------------------------------------------------------------------------
 # Environment variables
@@ -117,16 +114,28 @@ Write the corrected SQL query:"""
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
+    print("--- SCRIPT INVOKED ---", file=sys.stderr, flush=True)
+    print("[DEBUG] Starting inference script...", flush=True)
+
+    try:
+        import requests
+        from openai import OpenAI
+        from typing import List, Any
+    except ImportError as e:
+        print(f"[ERROR] Dependency missing: {e}", flush=True)
+        sys.exit(1)
+
     # Use globals but handle them locally for safety
     global API_BASE_URL, API_KEY, MODEL_NAME
     
-    print(f"[DEBUG] Starting inference script...", flush=True)
+    API_BASE_URL = os.environ.get("API_BASE_URL")
+    API_KEY      = os.environ.get("API_KEY")
+    MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 
     if not API_BASE_URL or not API_KEY:
         print(f"[ERROR] Required environment variables are missing!", flush=True)
         print(f"[ERROR] API_BASE_URL: {'Set' if API_BASE_URL else 'MISSING'}", flush=True)
         print(f"[ERROR] API_KEY: {'Set' if API_KEY else 'MISSING'}", flush=True)
-        import sys
         sys.exit(1)
 
     print(f"[DEBUG] Config: model={MODEL_NAME} env={ENV_URL}", flush=True)
@@ -141,7 +150,6 @@ def main() -> None:
         print(f"[DEBUG] OpenAI client initialized with base_url={base_url}", flush=True)
     except Exception as e:
         print(f"[ERROR] Fatal error initializing OpenAI client: {e}", flush=True)
-        import sys
         sys.exit(1)
 
     wait_for_env(max_wait=60)
