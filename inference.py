@@ -14,15 +14,12 @@ from openai import OpenAI
 # ---------------------------------------------------------------------------
 # Environment variables
 # ---------------------------------------------------------------------------
-API_BASE_URL     = os.getenv("API_BASE_URL")
-if not API_BASE_URL:
-    print("[WARNING] API_BASE_URL not set! Please ensure it is provided in the environment.", flush=True)
-    API_BASE_URL = "https://api.openai.com/v1"
+# CRITICAL: Using os.environ strictly as per validator "How to fix it" instructions.
+# No fallbacks allowed to prevent proxy bypass.
+API_BASE_URL     = os.environ["API_BASE_URL"]
+API_KEY          = os.environ["API_KEY"]
+MODEL_NAME       = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 
-MODEL_NAME       = os.getenv("MODEL_NAME", "gpt-4o-mini")
-
-# CRITICAL: Using API_KEY as per the specific requirement in the validator email
-API_KEY          = os.getenv("API_KEY") or os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or "placeholder-key"
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
 ENV_URL          = os.getenv("ENV_URL", "http://localhost:7860")
 
