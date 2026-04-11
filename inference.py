@@ -32,33 +32,35 @@ Output ONLY the corrected SQL query — no explanations, no markdown, no backtic
 # Structured logging — plain text format as required
 # ---------------------------------------------------------------------------
 def log_start(task: str, env: str, model: str) -> None:
-    print(f"[START] task={task} env={env} model={model}", flush=True)
+    msg = f"[START] task={task} env={env} model={model}"
+    print(msg, flush=True)
+    print(msg, file=sys.stderr, flush=True)
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Any = None) -> None:
-    # Use !r for action to handle multi-line SQL strings correctly in logs if needed, 
-    # but the sample implies field=value format.
-    # The requirement says 'strictly following the format'.
-    # Sample call: log_step(step=step, action=message, reward=reward, done=done, error=error)
-    print(f"[STEP] step={step} action={action!r} reward={reward:.4f} done={done} error={error}", flush=True)
+    msg = f"[STEP] step={step} action={action!r} reward={reward:.4f} done={done} error={error}"
+    print(msg, flush=True)
+    print(msg, file=sys.stderr, flush=True)
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    print(f"[END] success={success} steps={steps} score={score:.4f} rewards={rewards}", flush=True)
+    msg = f"[END] success={success} steps={steps} score={score:.4f} rewards={rewards}"
+    print(msg, flush=True)
+    print(msg, file=sys.stderr, flush=True)
 
 # ---------------------------------------------------------------------------
 # Wait for env
 # ---------------------------------------------------------------------------
 def wait_for_env(max_wait: int = 60) -> None:
-    print(f"[DEBUG] Waiting for env at {ENV_URL}...", flush=True)
+    print(f"[DEBUG] Waiting for env at {ENV_URL}...", file=sys.stderr, flush=True)
     for i in range(max_wait):
         try:
             r = requests.get(f"{ENV_URL}/health", timeout=5)
             if r.status_code == 200:
-                print(f"[DEBUG] Env ready after {i}s", flush=True)
+                print(f"[DEBUG] Env ready after {i}s", file=sys.stderr, flush=True)
                 return
         except Exception:
             pass
         time.sleep(1)
-    print(f"[DEBUG] Env not ready after {max_wait}s — proceeding anyway", flush=True)
+    print(f"[DEBUG] Env not ready after {max_wait}s — proceeding anyway", file=sys.stderr, flush=True)
 
 # ---------------------------------------------------------------------------
 # Env HTTP helpers
@@ -115,46 +117,47 @@ Write the corrected SQL query:"""
 # ---------------------------------------------------------------------------
 def main() -> None:
     print("--- SCRIPT INVOKED ---", file=sys.stderr, flush=True)
-    print("[DEBUG] Starting inference script...", flush=True)
-
+    
     try:
+        print("[DEBUG] Loading dependencies...", file=sys.stderr, flush=True)
         import requests
         from openai import OpenAI
         from typing import List, Any
-    except ImportError as e:
-        print(f"[ERROR] Dependency missing: {e}", flush=True)
+        
+        # Use globals but handle them locally for safety
+        global API_BASE_URL, API_KEY, MODEL_NAME
+        
+        API_BASE_URL = os.environ.get("API_BASE_URL")
+        API_KEY      = os.environ.get("API_KEY")
+        MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+
+        if not API_BASE_URL or not API_KEY:
+            print(f"[ERROR] Required environment variables are missing!", file=sys.stderr, flush=True)
+            print(f"[ERROR] API_BASE_URL: {'Set' if API_BASE_URL else 'MISSING'}", file=sys.stderr, flush=True)
+            print(f"[ERROR] API_KEY: {'Set' if API_KEY else 'MISSING'}", file=sys.stderr, flush=True)
+            sys.exit(1)
+
+        print(f"[DEBUG] Config: model={MODEL_NAME} env={ENV_URL}", file=sys.stderr, flush=True)
+
+        # Strict initialization with robust URL handling
+        try:
+            base_url = (API_BASE_URL or "").strip()
+            if base_url and not base_url.startswith("http"):
+                base_url = f"http://{base_url}"
+                
+            client = OpenAI(base_url=base_url, api_key=API_KEY)
+            print(f"[DEBUG] OpenAI client initialized with base_url={base_url}", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"[ERROR] Fatal error initializing OpenAI client: {e}", file=sys.stderr, flush=True)
+            sys.exit(1)
+
+        wait_for_env(max_wait=60)
+        
+    except Exception:
+        import traceback
+        print("[FATAL] Unhandled exception in main loop:", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         sys.exit(1)
-
-    # Use globals but handle them locally for safety
-    global API_BASE_URL, API_KEY, MODEL_NAME
-    
-    API_BASE_URL = os.environ.get("API_BASE_URL")
-    API_KEY      = os.environ.get("API_KEY")
-    MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-
-    if not API_BASE_URL or not API_KEY:
-        print(f"[ERROR] Required environment variables are missing!", flush=True)
-        print(f"[ERROR] API_BASE_URL: {'Set' if API_BASE_URL else 'MISSING'}", flush=True)
-        print(f"[ERROR] API_KEY: {'Set' if API_KEY else 'MISSING'}", flush=True)
-        sys.exit(1)
-
-    print(f"[DEBUG] Config: model={MODEL_NAME} env={ENV_URL}", flush=True)
-
-    # Strict initialization with robust URL handling
-    try:
-        base_url = API_BASE_URL.strip()
-        if base_url and not base_url.startswith("http"):
-            base_url = f"http://{base_url}"
-            
-        client = OpenAI(base_url=base_url, api_key=API_KEY)
-        print(f"[DEBUG] OpenAI client initialized with base_url={base_url}", flush=True)
-    except Exception as e:
-        print(f"[ERROR] Fatal error initializing OpenAI client: {e}", flush=True)
-        sys.exit(1)
-
-    wait_for_env(max_wait=60)
-
-    all_results = []
 
     for task_id in TASK_IDS:
         rewards: List[float] = []
