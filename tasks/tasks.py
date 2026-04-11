@@ -84,7 +84,7 @@ def _grade_easy(rows: List[Dict], error: Optional[str], query: str) -> Tuple[flo
         # partial: syntax nearly right?
         if "SyntaxError" not in error and "no such column" not in error:
             score += 0.05
-        return round(score, 3), " | ".join(parts)
+        return round(max(0.001, score), 3), " | ".join(parts)
 
     # Check: has rows
     if not rows:
@@ -194,7 +194,7 @@ def _grade_medium(rows: List[Dict], error: Optional[str], query: str) -> Tuple[f
     if error:
         parts.append(f"Query error: {error}")
         score += 0.02
-        return round(score, 3), " | ".join(parts)
+        return round(max(0.001, min(score, 0.999)), 3), " | ".join(parts)
 
     if not rows:
         return 0.05, "No rows returned."
@@ -334,10 +334,10 @@ def _grade_hard(rows: List[Dict], error: Optional[str], query: str) -> Tuple[flo
         parts.append(f"Query error: {error}")
         if "window" in error.lower() or "syntax" in error.lower():
             score += 0.02
-        return round(score, 3), " | ".join(parts)
+        return round(max(0.001, score), 3), " | ".join(parts)
 
     if not rows:
-        return 0.05, "No rows returned — check JOINs and WHERE clause."
+        return 0.051, "No rows returned — check JOINs and WHERE clause."
 
     cols = {c.lower() for c in rows[0].keys()}
 
@@ -407,7 +407,7 @@ def _grade_hard(rows: List[Dict], error: Optional[str], query: str) -> Tuple[flo
 
     # Bonus: if all checks pass, give full marks
     if score >= 0.95:
-        score = 1.0
+        score = 0.999
 
     # Clamp score strictly between 0 and 1 as per hackathon requirement
     final_score = max(0.001, min(score, 0.999))

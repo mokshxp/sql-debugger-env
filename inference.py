@@ -193,7 +193,7 @@ def main() -> None:
         for task_id in TASK_IDS:
             rewards: List[float] = []
             steps_taken = 0
-            score   = 0.0
+            score   = 0.001
             success = False
 
             log_start(task=task_id, env="sql-debugger", model=MODEL_NAME)
@@ -223,7 +223,8 @@ def main() -> None:
                     if done:
                         break
 
-                score   = min(max(score, 0.001), 0.999)
+                # Clamp score strictly between 0 and 1 as per hackathon requirement
+                score   = min(max(score, 0.0011), 0.9989)
                 success = score >= SUCCESS_SCORE_THRESHOLD
 
             except Exception as e:
