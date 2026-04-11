@@ -11,17 +11,18 @@ import time
 # ---------------------------------------------------------------------------
 # Environment variables
 # ---------------------------------------------------------------------------
-# Configuration is now handled inside main() to prevent top-level crashes
-API_BASE_URL     = os.environ.get("API_BASE_URL")
-API_KEY          = os.environ.get("API_KEY")
-MODEL_NAME       = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+# Placeholder globals (re-assigned in main)
+API_BASE_URL = None
+API_KEY      = None
+MODEL_NAME   = "gpt-4o-mini"
 
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
 # Robust ENV_URL discovery
 ENV_URL = os.getenv("ENV_URL")
 if not ENV_URL:
+    # Try common ports: 7860 (HF), 8000 (standard), 8080 (alt)
     port = os.getenv("PORT", "7860")
-    ENV_URL = f"http://0.0.0.0:{port}"
+    ENV_URL = f"http://localhost:{port}" # Default back to localhost for same-container runs
 
 TASK_IDS    = ["task_easy", "task_medium", "task_hard"]
 MAX_STEPS   = 10
@@ -159,6 +160,21 @@ def main() -> None:
                 http_client=httpx.Client()
             )
             print(f"[DEBUG] OpenAI client initialized with base_url={base_url}", file=sys.stderr, flush=True)
+
+            # --- HEARTBEAT CALL ---
+            # Ensures proxy registers activity immediately before any network delays
+            print("[DEBUG] Sending heartbeat API call to LiteLLM proxy...", file=sys.stderr, flush=True)
+            try:
+                client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[{"role": "user", "content": "ping"}],
+                    max_tokens=1
+                )
+                print("[DEBUG] Heartbeat successful!", file=sys.stderr, flush=True)
+            except Exception as hb_err:
+                print(f"[WARNING] Heartbeat failed: {hb_err}", file=sys.stderr, flush=True)
+            # ----------------------
+
         except Exception as e:
             print(f"[ERROR] Fatal error initializing OpenAI client: {e}", file=sys.stderr, flush=True)
             sys.exit(1)
