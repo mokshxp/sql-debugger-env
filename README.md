@@ -1,3 +1,21 @@
+---
+title: SQL Debugger OpenEnv
+emoji: 🔍
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+license: mit
+tags:
+  - openenv
+  - sql
+  - debugging
+  - data-engineering
+  - reinforcement-learning
+  - agent-evaluation
+short_description: Real-world SQL debugging environment for AI agents (OpenEnv)
+---
+
 # 🔍 SQL Debugger — OpenEnv
 
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-Framework-blue.svg)](https://github.com/openenv)
