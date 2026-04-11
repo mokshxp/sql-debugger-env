@@ -141,7 +141,9 @@ def _grade_easy(rows: List[Dict], error: Optional[str], query: str) -> Tuple[flo
         else:
             parts.append("Results should be ordered by revenue DESC")
 
-    return round(min(score, 1.0), 3), " | ".join(parts) if parts else "Keep going!"
+    # Clamp score strictly between 0 and 1 as per hackathon requirement
+    final_score = max(0.001, min(score, 0.999))
+    return round(final_score, 3), " | ".join(parts) if parts else "Keep going!"
 
 
 TASK_EASY = Task(
@@ -262,7 +264,9 @@ def _grade_medium(rows: List[Dict], error: Optional[str], query: str) -> Tuple[f
             score += 0.1
             parts.append("✓ Ordered by total_spent DESC")
 
-    return round(min(score, 1.0), 3), " | ".join(parts)
+    # Clamp score strictly between 0 and 1 as per hackathon requirement
+    final_score = max(0.001, min(score, 0.999))
+    return round(final_score, 3), " | ".join(parts)
 
 
 TASK_MEDIUM = Task(
@@ -405,7 +409,9 @@ def _grade_hard(rows: List[Dict], error: Optional[str], query: str) -> Tuple[flo
     if score >= 0.95:
         score = 1.0
 
-    return round(min(score, 1.0), 3), " | ".join(parts)
+    # Clamp score strictly between 0 and 1 as per hackathon requirement
+    final_score = max(0.001, min(score, 0.999))
+    return round(final_score, 3), " | ".join(parts)
 
 
 TASK_HARD = Task(
