@@ -14,10 +14,9 @@ from openai import OpenAI
 # ---------------------------------------------------------------------------
 # Environment variables
 # ---------------------------------------------------------------------------
-# CRITICAL: Using os.environ strictly as per validator "How to fix it" instructions.
-# No fallbacks allowed to prevent proxy bypass.
-API_BASE_URL     = os.environ["API_BASE_URL"]
-API_KEY          = os.environ["API_KEY"]
+# Configuration is now handled inside main() to prevent top-level crashes
+API_BASE_URL     = os.environ.get("API_BASE_URL")
+API_KEY          = os.environ.get("API_KEY")
 MODEL_NAME       = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
@@ -118,7 +117,19 @@ Write the corrected SQL query:"""
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
-    print(f"[DEBUG] Starting inference | model={MODEL_NAME} env={ENV_URL}", flush=True)
+    # Use globals but handle them locally for safety
+    global API_BASE_URL, API_KEY, MODEL_NAME
+    
+    print(f"[DEBUG] Starting inference script...", flush=True)
+
+    if not API_BASE_URL or not API_KEY:
+        print(f"[ERROR] Required environment variables are missing!", flush=True)
+        print(f"[ERROR] API_BASE_URL: {'Set' if API_BASE_URL else 'MISSING'}", flush=True)
+        print(f"[ERROR] API_KEY: {'Set' if API_KEY else 'MISSING'}", flush=True)
+        import sys
+        sys.exit(1)
+
+    print(f"[DEBUG] Config: model={MODEL_NAME} env={ENV_URL}", flush=True)
 
     # Strict initialization with robust URL handling
     try:
