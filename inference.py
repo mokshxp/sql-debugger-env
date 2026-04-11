@@ -102,21 +102,17 @@ GRADER FEEDBACK:
 
 Write the corrected SQL query:"""
 
-    try:
-        completion = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
-        )
-        sql = completion.choices[0].message.content or ""
-        return sql.replace("```sql", "").replace("```", "").strip()
-    except Exception as exc:
-        print(f"[DEBUG] Model request failed: {exc}", flush=True)
-        return obs.get("current_query", "SELECT 1")
+    completion = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=TEMPERATURE,
+        max_tokens=MAX_TOKENS,
+    )
+    sql = completion.choices[0].message.content or ""
+    return sql.replace("```sql", "").replace("```", "").strip()
 
 # ---------------------------------------------------------------------------
 # Main
@@ -124,12 +120,9 @@ Write the corrected SQL query:"""
 def main() -> None:
     print(f"[DEBUG] Starting inference | model={MODEL_NAME} env={ENV_URL}", flush=True)
 
-    try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-        print(f"[DEBUG] OpenAI client initialized with base_url={API_BASE_URL}", flush=True)
-    except Exception as e:
-        print(f"[DEBUG] OpenAI client init failed: {e}", flush=True)
-        client = None
+    # Strict initialization: if this fails, the script will crash (desired behavior)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    print(f"[DEBUG] OpenAI client initialized with base_url={API_BASE_URL}", flush=True)
 
     wait_for_env(max_wait=60)
 
@@ -151,10 +144,8 @@ def main() -> None:
                 if done:
                     break
 
-                if client:
-                    action = get_model_message(client, obs)
-                else:
-                    action = obs.get("current_query", "SELECT 1")
+                # Force model usage
+                action = get_model_message(client, obs)
 
                 result = env_step(task_id, action)
                 obs    = result["observation"]
