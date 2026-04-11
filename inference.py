@@ -30,23 +30,17 @@ SYSTEM_PROMPT = """You are an expert SQL engineer. Debug and fix the given SQL q
 Output ONLY the corrected SQL query — no explanations, no markdown, no backticks."""
 
 # ---------------------------------------------------------------------------
-# Structured logging
+# Structured logging — plain text format as required
 # ---------------------------------------------------------------------------
 def log_start(task: str, env: str, model: str) -> None:
-    print(json.dumps({"type": "START", "task": task, "env": env, "model": model}), flush=True)
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 def log_step(step: int, action: str, reward: float, done: bool, error=None) -> None:
-    print(json.dumps({
-        "type": "STEP", "step": step,
-        "action": action[:300], "reward": reward,
-        "done": done, "error": str(error) if error else None,
-    }), flush=True)
+    error_str = f" error={error}" if error else ""
+    print(f"[STEP] step={step} reward={reward:.4f} done={done}{error_str}", flush=True)
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    print(json.dumps({
-        "type": "END", "success": success,
-        "steps": steps, "score": score, "rewards": rewards,
-    }), flush=True)
+    print(f"[END] success={success} steps={steps} score={score:.4f} rewards={rewards}", flush=True)
 
 # ---------------------------------------------------------------------------
 # Wait for env
@@ -119,7 +113,7 @@ Write the corrected SQL query:"""
         return obs.get("current_query", "SELECT 1")
 
 # ---------------------------------------------------------------------------
-# Main — synchronous, no asyncio
+# Main
 # ---------------------------------------------------------------------------
 def main() -> None:
     print(f"[DEBUG] Starting inference | model={MODEL_NAME} env={ENV_URL}", flush=True)
