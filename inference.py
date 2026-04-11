@@ -7,12 +7,9 @@ import time
 import sys
 import subprocess
 
-# Install compatible versions
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q",
-    "openai==1.35.3",
-    "httpx==0.27.0",
-    "requests>=2.32.3",
+    "openai==1.35.3", "httpx==0.27.0", "requests>=2.32.3",
 ])
 
 import requests
@@ -36,17 +33,17 @@ Output ONLY the corrected SQL query — no explanations, no markdown, no backtic
 # ---------------------------------------------------------------------------
 # Structured logging
 # ---------------------------------------------------------------------------
-def log_start(task: str, model: str) -> None:
+def log_start(task, model):
     print(json.dumps({"type": "START", "task": task, "model": model}), flush=True)
 
-def log_step(step: int, action: str, reward: float, done: bool, error=None) -> None:
+def log_step(step, action, reward, done, error=None):
     print(json.dumps({
         "type": "STEP", "step": step,
         "action": action[:200], "reward": reward,
         "done": done, "error": str(error) if error else None,
     }), flush=True)
 
-def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
+def log_end(success, steps, score, rewards):
     print(json.dumps({
         "type": "END", "success": success,
         "steps": steps, "score": score, "rewards": rewards,
@@ -58,33 +55,33 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
 client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 # ---------------------------------------------------------------------------
-# Env client — try HF Space URL if localhost fails
+# Env client
 # ---------------------------------------------------------------------------
-def get_env_url():
-    """Try localhost first, then HF Space URL."""
-    urls_to_try = [
-        ENV_URL,
-        "https://moksh24-sql-debugger-env.hf.space",
-    ]
-    for url in urls_to_try:
+def env_reset(task_id):
+    r = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+def env_step(task_id, sql):
+    r = requests.post(f"{ENV_URL}/step", json={"task_id": task_id, "sql": sql}, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+# ---------------------------------------------------------------------------
+# Wait for env to be ready
+# ---------------------------------------------------------------------------
+def wait_for_env(max_wait=120):
+    print(f"[DEBUG] Waiting for env at {ENV_URL}...", flush=True)
+    for i in range(max_wait):
         try:
-            r = requests.get(f"{url}/health", timeout=10)
+            r = requests.get(f"{ENV_URL}/health", timeout=5)
             if r.status_code == 200:
-                print(f"[DEBUG] Connected to env at {url}", flush=True)
-                return url
+                print(f"[DEBUG] Env ready after {i}s", flush=True)
+                return True
         except Exception:
-            continue
-    raise RuntimeError(f"Could not connect to environment at any URL: {urls_to_try}")
-
-def env_reset(base_url, task_id):
-    r = requests.post(f"{base_url}/reset", json={"task_id": task_id}, timeout=30)
-    r.raise_for_status()
-    return r.json()
-
-def env_step(base_url, task_id, sql):
-    r = requests.post(f"{base_url}/step", json={"task_id": task_id, "sql": sql}, timeout=30)
-    r.raise_for_status()
-    return r.json()
+            pass
+        time.sleep(1)
+    raise RuntimeError(f"Env not ready after {max_wait}s at {ENV_URL}")
 
 # ---------------------------------------------------------------------------
 # Prompt
@@ -114,9 +111,9 @@ Write the corrected SQL query:"""
 # ---------------------------------------------------------------------------
 # Run task
 # ---------------------------------------------------------------------------
-def run_task(base_url, task_id):
+def run_task(task_id):
     log_start(task=task_id, model=MODEL_NAME)
-    obs       = env_reset(base_url, task_id)
+    obs       = env_reset(task_id)
     max_steps = obs.get("max_steps", 10)
     done      = False
     step      = 0
@@ -137,7 +134,7 @@ def run_task(base_url, task_id):
             sql = completion.choices[0].message.content or ""
             sql = sql.replace("```sql", "").replace("```", "").strip()
 
-            result  = env_step(base_url, task_id, sql)
+            result  = env_step(task_id, sql)
             obs     = result["observation"]
             reward  = result["reward"]["value"]
             done    = result["done"]
@@ -161,14 +158,13 @@ def run_task(base_url, task_id):
 # ---------------------------------------------------------------------------
 def main():
     print(f"SQL Debugger — OpenEnv Inference | model={MODEL_NAME}", flush=True)
-    
-    # Find working env URL
-    base_url = get_env_url()
-    print(f"Using env URL: {base_url}", flush=True)
+
+    # Wait for environment to be ready
+    wait_for_env(max_wait=120)
 
     results = {}
     for task_id in TASK_IDS:
-        results[task_id] = run_task(base_url, task_id)
+        results[task_id] = run_task(task_id)
 
     avg = sum(r["best_score"] for r in results.values()) / len(results)
     print(f"\nAVERAGE SCORE: {avg:.3f}", flush=True)
