@@ -123,7 +123,18 @@ def main() -> None:
         import requests
         from openai import OpenAI
         from typing import List, Any
-        
+        import openai
+        print(f"[DEBUG] OpenAI version: {openai.__version__}", file=sys.stderr, flush=True)
+
+        # Defensive patch against broken validator injection
+        original_init = OpenAI.__init__
+        def patched_init(self, *args, **kwargs):
+            if 'proxies' in kwargs:
+                print(f"[DEBUG] Stripping injected 'proxies' argument", file=sys.stderr, flush=True)
+                kwargs.pop('proxies')
+            return original_init(self, *args, **kwargs)
+        OpenAI.__init__ = patched_init
+
         # Use globals but handle them locally for safety
         global API_BASE_URL, API_KEY, MODEL_NAME
         
