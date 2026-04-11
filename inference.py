@@ -17,7 +17,11 @@ API_KEY          = os.environ.get("API_KEY")
 MODEL_NAME       = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
-ENV_URL          = os.getenv("ENV_URL", "http://localhost:7860")
+# Robust ENV_URL discovery
+ENV_URL = os.getenv("ENV_URL")
+if not ENV_URL:
+    port = os.getenv("PORT", "7860")
+    ENV_URL = f"http://0.0.0.0:{port}"
 
 TASK_IDS    = ["task_easy", "task_medium", "task_hard"]
 MAX_STEPS   = 10
@@ -167,55 +171,61 @@ def main() -> None:
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
-    for task_id in TASK_IDS:
-        rewards: List[float] = []
-        steps_taken = 0
-        score   = 0.0
-        success = False
+    all_results = []
 
-        log_start(task=task_id, env="sql-debugger", model=MODEL_NAME)
+    try:
+        for task_id in TASK_IDS:
+            rewards: List[float] = []
+            steps_taken = 0
+            score   = 0.0
+            success = False
 
-        try:
-            obs  = env_reset(task_id)
-            done = False
+            log_start(task=task_id, env="sql-debugger", model=MODEL_NAME)
 
-            for step in range(1, MAX_STEPS + 1):
-                if done:
-                    break
+            try:
+                obs  = env_reset(task_id)
+                done = False
 
-                # Force model usage
-                action = get_model_message(client, obs)
+                for step in range(1, MAX_STEPS + 1):
+                    if done:
+                        break
 
-                result = env_step(task_id, action)
-                obs    = result["observation"]
-                reward = result["reward"]["value"] if result.get("reward") else 0.0
-                done   = result.get("done", False)
-                score  = obs.get("score", 0.0)
+                    # Force model usage
+                    action = get_model_message(client, obs)
 
-                rewards.append(reward)
-                steps_taken = step
+                    result = env_step(task_id, action)
+                    obs    = result["observation"]
+                    reward = result["reward"]["value"] if result.get("reward") else 0.0
+                    done   = result.get("done", False)
+                    score  = obs.get("score", 0.0)
 
-                log_step(step=step, action=action, reward=reward, done=done)
+                    rewards.append(reward)
+                    steps_taken = step
 
-                if done:
-                    break
+                    log_step(step=step, action=action, reward=reward, done=done)
 
-            score   = min(max(score, 0.0), 1.0)
-            success = score >= SUCCESS_SCORE_THRESHOLD
+                    if done:
+                        break
 
-        except Exception as e:
-            print(f"[DEBUG] Task {task_id} error: {e}", flush=True)
+                score   = min(max(score, 0.0), 1.0)
+                success = score >= SUCCESS_SCORE_THRESHOLD
 
-        finally:
-            log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+            except Exception as e:
+                print(f"[DEBUG] Task {task_id} execution error: {e}", file=sys.stderr, flush=True)
 
-        all_results.append({
-            "task_id": task_id,
-            "score":   round(score, 4),
-            "steps":   steps_taken,
-        })
+            finally:
+                log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+                all_results.append({
+                    "task_id": task_id,
+                    "score":   round(score, 4),
+                    "steps":   steps_taken,
+                })
+    except Exception as e:
+        print(f"[FATAL] Orchestration error: {e}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
 
-    avg = sum(r["score"] for r in all_results) / len(all_results)
+    avg = sum(r["score"] for r in all_results) / len(all_results) if all_results else 0.0
     print(f"[DEBUG] Average score: {avg:.3f}", flush=True)
 
     with open("baseline_results.json", "w") as f:
