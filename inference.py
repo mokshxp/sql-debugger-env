@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import List
+from typing import List, Any
 
 import requests
 from openai import OpenAI
@@ -14,9 +14,14 @@ from openai import OpenAI
 # ---------------------------------------------------------------------------
 # Environment variables
 # ---------------------------------------------------------------------------
-API_BASE_URL     = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+API_BASE_URL     = os.getenv("API_BASE_URL")
+if not API_BASE_URL:
+    print("[WARNING] API_BASE_URL not set! Defaulting to OpenAI (this may fail proxy check).", flush=True)
+    API_BASE_URL = "https://api.openai.com/v1"
+
 MODEL_NAME       = os.getenv("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN         = os.getenv("HF_TOKEN", "dummy-key")
+# Using HF_TOKEN or OPENAI_API_KEY as per instructions
+API_KEY          = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or "dummy-key"
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
 ENV_URL          = os.getenv("ENV_URL", "http://localhost:7860")
 
@@ -35,9 +40,12 @@ Output ONLY the corrected SQL query — no explanations, no markdown, no backtic
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
-def log_step(step: int, action: str, reward: float, done: bool, error=None) -> None:
-    error_str = f" error={error}" if error else ""
-    print(f"[STEP] step={step} reward={reward:.4f} done={done}{error_str}", flush=True)
+def log_step(step: int, action: str, reward: float, done: bool, error: Any = None) -> None:
+    # Use !r for action to handle multi-line SQL strings correctly in logs if needed, 
+    # but the sample implies field=value format.
+    # The requirement says 'strictly following the format'.
+    # Sample call: log_step(step=step, action=message, reward=reward, done=done, error=error)
+    print(f"[STEP] step={step} action={action!r} reward={reward:.4f} done={done} error={error}", flush=True)
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     print(f"[END] success={success} steps={steps} score={score:.4f} rewards={rewards}", flush=True)
@@ -119,8 +127,8 @@ def main() -> None:
     print(f"[DEBUG] Starting inference | model={MODEL_NAME} env={ENV_URL}", flush=True)
 
     try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-        print(f"[DEBUG] OpenAI client initialized", flush=True)
+        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        print(f"[DEBUG] OpenAI client initialized with base_url={API_BASE_URL}", flush=True)
     except Exception as e:
         print(f"[DEBUG] OpenAI client init failed: {e}", flush=True)
         client = None
